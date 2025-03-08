@@ -1,64 +1,135 @@
-import React from 'react';
-import Plyr from 'plyr-react';
+import React, { useEffect, useRef } from 'react';
+import Plyr, { PlyrInstance } from 'plyr-react';
 import "plyr-react/plyr.css";
-import { Play } from 'lucide-react';
+
+declare global {
+  interface Window {
+    google: any;
+  }
+}
 
 function App() {
+  const playerRef = useRef<PlyrInstance>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const adContainerRef = useRef<HTMLDivElement>(null);
+  const adsManagerRef = useRef<any>(null);
+  
+  const params = new URLSearchParams(window.location.search);
+  const videoUrl = params.get('video') || 'https://cdn.plyr.io/static/demo/View_From_A_Blue_Moon_Trailer-576p.mp4';
+  const adTagUrl = params.get('adTag') || '';
+
   const videoOptions = {
-    autoplay: true,
+    clickToPlay: false,
+    autoplay: false,
     muted: true,
-    controls: ['play-large', 'play', 'progress', 'current-time', 'mute', 'volume', 'fullscreen'],
-    settings: ['quality', 'speed'],
+    controls: [
+      'play-large',
+      'play',
+      'progress',
+      'current-time',
+      'duration',
+      'mute',
+      'volume',
+      'settings',
+      'fullscreen'
+    ],
+    settings: ['quality', 'speed']
   };
 
   const videoSrc = {
     type: 'video',
     sources: [
       {
-        src: 'https://cdn.plyr.io/static/demo/View_From_A_Blue_Moon_Trailer-576p.mp4',
+        src: videoUrl,
         type: 'video/mp4',
         size: 576,
       }
     ]
   };
 
-  return (
-    <div className="min-h-screen bg-gray-900">
-      {/* Header */}
-      <header className="bg-gray-800 py-4">
-        <div className="container mx-auto px-4 flex items-center">
-          <Play className="text-blue-500 w-8 h-8" />
-          <h1 className="text-white text-2xl font-bold ml-2">Video Player</h1>
-        </div>
-      </header>
+  useEffect(() => {
+    if (!adTagUrl) return;
 
-      {/* Main Content */}
-      <main className="container mx-auto px-4 py-8">
-        <div className="max-w-4xl mx-auto">
-          <div className="bg-black rounded-lg overflow-hidden shadow-2xl">
-            <Plyr 
-              source={videoSrc}
-              options={videoOptions}
-            />
-          </div>
+    const initializeIMA = () => {
+      const adDisplayContainer = new window.google.ima.AdDisplayContainer(
+        adContainerRef.current,
+        playerRef.current?.plyr?.media
+      );
+      
+      adDisplayContainer.initialize();
+      const adsLoader = new window.google.ima.AdsLoader(adDisplayContainer);
+
+      adsLoader.addEventListener(
+        window.google.ima.AdsManagerLoadedEvent.Type.ADS_MANAGER_LOADED,
+        (adsManagerLoadedEvent: any) => {
+          const adsRenderingSettings = new window.google.ima.AdsRenderingSettings();
+          adsRenderingSettings.enablePreloading = true;
           
-          <div className="mt-6 bg-gray-800 rounded-lg p-6">
-            <h2 className="text-white text-xl font-semibold mb-3">About This Video</h2>
-            <p className="text-gray-300">
-              This is a sample video showcasing the Plyr video player integration. 
-              The player automatically starts when the page loads and includes standard 
-              video controls for the best user experience.
-            </p>
-          </div>
-        </div>
-      </main>
+          adsManagerRef.current = adsManagerLoadedEvent.getAdsManager(
+            playerRef.current?.plyr?.media,
+            adsRenderingSettings
+          );
 
-      {/* Footer */}
-      <footer className="bg-gray-800 py-4 mt-8">
-        <div className="container mx-auto px-4 text-center text-gray-400">
-          <p>© 2024 Video Player Demo. Powered by Plyr.</p>
-        </div>
-      </footer>
+          // Add event listeners for ad completion
+          adsManagerRef.current.addEventListener(
+            window.google.ima.AdEvent.Type.ALL_ADS_COMPLETED,
+            () => {
+              // Start playing the main video
+              if (playerRef.current?.plyr) {
+                playerRef.current.plyr.play();
+              }
+            }
+          );
+
+          try {
+            adsManagerRef.current.init(
+              containerRef.current?.offsetWidth || 640,
+              containerRef.current?.offsetHeight || 360,
+              window.google.ima.ViewMode.NORMAL
+            );
+            adsManagerRef.current.start();
+          } catch (adError) {
+            console.error("AdsManager error:", adError);
+            if (playerRef.current?.plyr) {
+              playerRef.current.plyr.play();
+            }
+          }
+        }
+      );
+
+      // Request ads
+      const adsRequest = new window.google.ima.AdsRequest();
+      adsRequest.adTagUrl = adTagUrl;
+      adsRequest.linearAdSlotWidth = containerRef.current?.offsetWidth || 640;
+      adsRequest.linearAdSlotHeight = containerRef.current?.offsetHeight || 360;
+      adsLoader.requestAds(adsRequest);
+    };
+
+    // Load IMA SDK if not already loaded
+    if (window.google && window.google.ima) {
+      initializeIMA();
+    } else {
+      const script = document.createElement('script');
+      script.src = '//imasdk.googleapis.com/js/sdkloader/ima3.js';
+      script.onload = initializeIMA;
+      document.head.appendChild(script);
+    }
+
+    return () => {
+      if (adsManagerRef.current) {
+        adsManagerRef.current.destroy();
+      }
+    };
+  }, [adTagUrl]);
+
+  return (
+    <div ref={containerRef} className="w-full h-full bg-black relative">
+      <div ref={adContainerRef} className="absolute top-0 left-0 w-full h-[calc(100%-40px)] z-10"></div>
+      <Plyr 
+        ref={playerRef}
+        source={videoSrc}
+        options={videoOptions}
+      />
     </div>
   );
 }
